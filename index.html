@@ -379,6 +379,11 @@
 const START_DATE = new Date(2026, 7, 7); // 2026-08-07 周五
 const WEEKS_TO_SHOW = 52;
 
+// 节假日调整：key=原周五日期, value=实际巡检日期
+const DATE_OVERRIDES = {
+  '2026-10-02': '2026-09-30' // 国庆节提前至9月30日
+};
+
 const DEFAULT_MEMBERS = [
   'jammy.wang','kyle.wen','simon.chen','siyi.teng','sorin.li','tina.chen',
   'wensy.xie','zhengxi.wang','peter.zhu','chenhao.ye','erik.lu','jackson.ding'
@@ -577,6 +582,8 @@ function renderTable() {
     }
 
     const key = dateKey(fri);
+    const overrideStr = DATE_OVERRIDES[key];
+    const displayDate = overrideStr ? new Date(overrideStr) : fri;
     const row = appData.rows[key] || { c1: false, c2: false, c3: false, remark: '', ct1: '', ct2: '', ct3: '' };
     const person = members[idx % members.length];
 
@@ -606,8 +613,8 @@ function renderTable() {
 
     tr.innerHTML = `
       <td class="date-cell">
-        ${fri.getMonth()+1}/${fri.getDate()}
-        <span class="weekday">周${dayNames[fri.getDay()]}</span>
+        ${displayDate.getMonth()+1}/${displayDate.getDate()}
+        <span class="weekday">周${dayNames[displayDate.getDay()]}${overrideStr ? '&nbsp;<span style="color:#e67e22;font-size:10px;">调休</span>' : ''}</span>
       </td>
       <td class="person-cell">${escHtml(person)}</td>
       <td class="check-cell">
