@@ -397,38 +397,63 @@ const DEFAULT_MEMBERS = [
   'wensy.xie','zhengxi.wang','peter.zhu','chenhao.ye','erik.lu','jackson.ding'
 ];
 
-// ── JSONBin.io 配置 ──
-const JSONBIN_BIN_ID = '6a967dfef5f4af5e295b3ad5';
-const JSONBIN_API_KEY = '$2a$10$APvnwrNq4oc3Sk7qKJxki.Fx7RWOid/kOv4cZRKytlvcNFfe3gbNi';
+// ── Supabase 配置 ──
+const SUPABASE_URL = 'https://ufymlnliwcztzwadcarg.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVmeW1sbmxpd2N6dHp3YWRjYXJnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4MzUxNDAsImV4cCI6MjEwNDQxMTE0MH0.H8XVx07Cou4swZw9pw5vJUuckP_cJgmLHQtCxYtQqbk';
+const SB_HEADERS = {
+  'apikey': SUPABASE_KEY,
+  'Authorization': 'Bearer ' + SUPABASE_KEY,
+  'Content-Type': 'application/json'
+};
 
 // ── 内存数据 ──
 let appData = { members: [...DEFAULT_MEMBERS], rows: {} };
 let isSaving = false;
 let pollTimer = null;
+let dirtyRows = {}; // 本地已改动、待确认已同步的行 { key: true }
+let membersDirty = false; // 成员列表是否有本地未同步改动
 
-// ── JSONBin API ──
+// ── Supabase API ──
+// 读取整份数据
 async function fetchData() {
-  if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) return null;
   try {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`, {
-      headers: { 'X-Master-Key': JSONBIN_API_KEY }
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/board?id=eq.1&select=data`, {
+      headers: SB_HEADERS
     });
     if (!res.ok) return null;
     const json = await res.json();
-    return json.record;
+    if (json && json[0] && json[0].data) return json[0].data;
+    return null;
   } catch(e) { return null; }
 }
 
+// 保存：先拉取云端最新数据，把本地脏改动合并进去再写回（避免覆盖他人）
 async function pushData() {
   try {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': JSONBIN_API_KEY
-      },
-      body: JSON.stringify(appData)
+    const remote = await fetchData();
+    const base = remote || { members: appData.members, rows: {} };
+
+    // 行数据：以云端为基础，仅把本地"脏行"覆盖上去
+    const mergedRows = Object.assign({}, base.rows || {});
+    Object.keys(dirtyRows).forEach(k => {
+      if (appData.rows[k]) mergedRows[k] = appData.rows[k];
     });
+
+    // 成员：若本地改过则以本地为准，否则用云端
+    const mergedMembers = membersDirty ? appData.members : (base.members || appData.members);
+
+    appData = { members: mergedMembers, rows: mergedRows };
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/board?id=eq.1`, {
+      method: 'PATCH',
+      headers: SB_HEADERS,
+      body: JSON.stringify({ data: appData })
+    });
+    if (res.ok) {
+      // 写成功后清空脏标记
+      dirtyRows = {};
+      membersDirty = false;
+    }
     return res.ok;
   } catch(e) { return false; }
 }
@@ -454,20 +479,28 @@ async function initData() {
   startPolling();
 }
 
-// ── 定时轮询（30秒） ──
+// ── 定时轮询（15秒） ──
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     if (isSaving) return;
+    // 若用户正在输入备注，跳过本次刷新，避免打断
+    if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
     const remote = await fetchData();
     if (remote && remote.rows !== undefined) {
-      appData = remote;
+      // 合并：云端为基础，保留本地未同步的脏行
+      const mergedRows = Object.assign({}, remote.rows || {});
+      Object.keys(dirtyRows).forEach(k => {
+        if (appData.rows[k]) mergedRows[k] = appData.rows[k];
+      });
+      const mergedMembers = membersDirty ? appData.members : (remote.members || appData.members);
+      appData = { members: mergedMembers, rows: mergedRows };
       setSyncStatus('✓ 已同步 ' + nowStr(), '#2e9e5b');
       renderMembers();
       renderTable();
       updateSafeWeeks();
     }
-  }, 30000);
+  }, 15000);
 }
 
 function nowStr() {
@@ -480,7 +513,16 @@ async function saveData() {
   isSaving = true;
   setSyncStatus('保存中…', '#999');
   const ok = await pushData();
-  setSyncStatus(ok ? '✓ 已保存 ' + nowStr() : '⚠️ 保存失败', ok ? '#2e9e5b' : '#c0392b');
+  if (ok) {
+    setSyncStatus('✓ 已保存 ' + nowStr(), '#2e9e5b');
+    // 保存成功后重绘，反映合并进来的他人数据
+    renderTable();
+    updateSafeWeeks();
+  } else {
+    setSyncStatus('⚠️ 保存失败，稍后自动重试', '#c0392b');
+    // 3秒后自动重试（脏标记仍在，不会丢数据）
+    setTimeout(() => { if (Object.keys(dirtyRows).length || membersDirty) saveData(); }, 3000);
+  }
   isSaving = false;
 }
 
@@ -682,6 +724,7 @@ function onCheck(key, field, el) {
   const tsEl = document.getElementById(timeField + '_' + key);
   if (tsEl) tsEl.textContent = ts;
 
+  dirtyRows[key] = true;
   updateStatusBadge(key);
   updateSafeWeeks();
   saveData();
@@ -692,6 +735,7 @@ function onCheck(key, field, el) {
 function onRemark(key, el) {
   if (!appData.rows[key]) appData.rows[key] = { c1:false, c2:false, c3:false, c4:false, remark:'', ct1:'', ct2:'', ct3:'', ct4:'' };
   appData.rows[key].remark = el.value;
+  dirtyRows[key] = true;
   updateStatusBadge(key);
   updateSafeWeeks();
   saveData();
@@ -727,6 +771,7 @@ function addMember() {
   if (!name) { showToast('请输入姓名'); return; }
   if (appData.members.includes(name)) { showToast('姓名已存在'); return; }
   appData.members.push(name);
+  membersDirty = true;
   input.value = '';
   renderMembers();
   renderTable();
@@ -740,6 +785,7 @@ function removeMember(idx) {
   const name = appData.members[idx];
   if (!confirm(`确认删除成员「${name}」？\n删除后排班顺序将自动更新。`)) return;
   appData.members.splice(idx, 1);
+  membersDirty = true;
   renderMembers();
   renderTable();
   updateSafeWeeks();
@@ -752,13 +798,28 @@ document.getElementById('newMemberInput').addEventListener('keydown', function(e
 });
 
 // ── 重置数据 ──
-function resetData() {
-  if (!confirm('确认重置所有巡检数据？此操作不可撤销。')) return;
+async function resetData() {
+  if (!confirm('确认重置所有巡检数据？此操作不可撤销，将清空所有人的填写记录。')) return;
   appData = { members: [...DEFAULT_MEMBERS], rows: {} };
+  dirtyRows = {};
+  membersDirty = false;
   renderMembers();
   renderTable();
   updateSafeWeeks();
-  saveData();
+  // 重置是有意的完全覆盖，直接写入不做合并
+  isSaving = true;
+  setSyncStatus('保存中…', '#999');
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/board?id=eq.1`, {
+      method: 'PATCH',
+      headers: SB_HEADERS,
+      body: JSON.stringify({ data: appData })
+    });
+    setSyncStatus(res.ok ? '✓ 已重置 ' + nowStr() : '⚠️ 重置失败', res.ok ? '#2e9e5b' : '#c0392b');
+  } catch(e) {
+    setSyncStatus('⚠️ 重置失败', '#c0392b');
+  }
+  isSaving = false;
   showToast('数据已重置');
 }
 
@@ -772,6 +833,7 @@ function exportCSV() {
     const key = dateKey(fri);
     const row = appData.rows[key] || {};
     const person = PERSON_OVERRIDES[key] || members[idx % members.length];
+    rows.push([
       formatDate(fri), person,
       row.c1 ? '已确认' : '未确认',
       row.c2 ? '已确认' : '未确认',
