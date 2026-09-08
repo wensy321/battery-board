@@ -637,6 +637,7 @@ function renderTable() {
     const row = appData.rows[key] || { c1: false, c2: false, c3: false, c4: false, remark: '', ct1: '', ct2: '', ct3: '', ct4: '' };
     const person = PERSON_OVERRIDES[key] || members[idx % members.length];
 
+    const isCurrent = isCurrentWeekFriday(fri);
     const past = isPast(fri) && !isCurrent;
 
     const tr = document.createElement('tr');
