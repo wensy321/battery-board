@@ -386,6 +386,12 @@ const DATE_OVERRIDES = {
   '2026-10-02': '2026-09-30' // 国庆节提前至9月30日
 };
 
+// 人员换班：key=周五日期, value=实际值班人（覆盖默认排班）
+const PERSON_OVERRIDES = {
+  '2026-09-18': 'siyi.teng',  // wensy.xie 与 siyi.teng 互换
+  '2026-11-20': 'wensy.xie'
+};
+
 const DEFAULT_MEMBERS = [
   'jammy.wang','kyle.wen','simon.chen','siyi.teng','sorin.li','tina.chen',
   'wensy.xie','zhengxi.wang','peter.zhu','chenhao.ye','erik.lu','jackson.ding'
@@ -587,9 +593,8 @@ function renderTable() {
     const overrideStr = DATE_OVERRIDES[key];
     const displayDate = overrideStr ? new Date(overrideStr) : fri;
     const row = appData.rows[key] || { c1: false, c2: false, c3: false, c4: false, remark: '', ct1: '', ct2: '', ct3: '', ct4: '' };
-    const person = members[idx % members.length];
+    const person = PERSON_OVERRIDES[key] || members[idx % members.length];
 
-    const isCurrent = isCurrentWeekFriday(fri);
     const past = isPast(fri) && !isCurrent;
 
     const tr = document.createElement('tr');
@@ -766,8 +771,7 @@ function exportCSV() {
   fridays.forEach((fri, idx) => {
     const key = dateKey(fri);
     const row = appData.rows[key] || {};
-    const person = members[idx % members.length];
-    rows.push([
+    const person = PERSON_OVERRIDES[key] || members[idx % members.length];
       formatDate(fri), person,
       row.c1 ? '已确认' : '未确认',
       row.c2 ? '已确认' : '未确认',
